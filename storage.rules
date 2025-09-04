@@ -1,0 +1,166 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function belongsToSameSchool(schoolId) {
+      return isAuthenticated() && getUserData().schoolId == schoolId;
+    }
+    
+    function isSchoolAdmin(schoolId) {
+      return isAuthenticated() && 
+             getUserData().role == 'school_admin' && 
+             getUserData().schoolId == schoolId;
+    }
+    
+    function hasAnyRole(roles) {
+      return isAuthenticated() && getUserData().role in roles;
+    }
+    
+    function isValidImageFile() {
+      return request.resource.contentType.matches('image/.*') &&
+             request.resource.size < 5 * 1024 * 1024; // 5MB limit
+    }
+    
+    function isValidDocumentFile() {
+      return request.resource.contentType.matches('(application/pdf|application/msword|application/vnd.openxmlformats-officedocument.wordprocessingml.document|text/plain)') &&
+             request.resource.size < 10 * 1024 * 1024; // 10MB limit
+    }
+
+    // School-specific file organization
+    match /schools/{schoolId}/{allPaths=**} {
+      allow read: if belongsToSameSchool(schoolId);
+      allow write: if belongsToSameSchool(schoolId) && 
+                      hasAnyRole(['school_admin', 'teacher', 'admin_assistant', 'principal']);
+    }
+
+    // User profile pictures - users can manage their own, admins can manage all
+    match /schools/{schoolId}/users/{userId}/profile/{fileName} {
+      allow read: if belongsToSameSchool(schoolId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      isValidImageFile() &&
+                      (request.auth.uid == userId || 
+                       hasAnyRole(['school_admin', 'admin_assistant', 'principal']));
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       (request.auth.uid == userId || isSchoolAdmin(schoolId));
+    }
+
+    // Student documents - restricted access
+    match /schools/{schoolId}/students/{studentId}/documents/{fileName} {
+      allow read: if belongsToSameSchool(schoolId) &&
+                     (hasAnyRole(['school_admin', 'teacher', 'principal', 'admin_assistant']) ||
+                      request.auth.uid == studentId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      (isValidDocumentFile() || isValidImageFile()) &&
+                      hasAnyRole(['school_admin', 'teacher', 'admin_assistant', 'principal']);
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       hasAnyRole(['school_admin', 'principal']);
+    }
+
+    // Teacher resources and materials
+    match /schools/{schoolId}/teachers/{teacherId}/resources/{fileName} {
+      allow read: if belongsToSameSchool(schoolId) &&
+                     (hasAnyRole(['school_admin', 'teacher', 'principal']) ||
+                      request.auth.uid == teacherId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      (isValidDocumentFile() || isValidImageFile()) &&
+                      (request.auth.uid == teacherId || 
+                       hasAnyRole(['school_admin', 'principal']));
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       (request.auth.uid == teacherId || isSchoolAdmin(schoolId));
+    }
+
+    // Class materials and assignments
+    match /schools/{schoolId}/classes/{classId}/materials/{fileName} {
+      allow read: if belongsToSameSchool(schoolId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      (isValidDocumentFile() || isValidImageFile()) &&
+                      hasAnyRole(['school_admin', 'teacher', 'principal']);
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       hasAnyRole(['school_admin', 'teacher', 'principal']);
+    }
+
+    // Announcement attachments
+    match /schools/{schoolId}/announcements/{announcementId}/attachments/{fileName} {
+      allow read: if belongsToSameSchool(schoolId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      (isValidDocumentFile() || isValidImageFile()) &&
+                      hasAnyRole(['school_admin', 'teacher', 'principal', 'admin_assistant']);
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       hasAnyRole(['school_admin', 'principal']);
+    }
+
+    // Message attachments - sender and recipients only
+    match /schools/{schoolId}/messages/{messageId}/attachments/{fileName} {
+      allow read: if belongsToSameSchool(schoolId);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      (isValidDocumentFile() || isValidImageFile());
+      
+      allow delete: if belongsToSameSchool(schoolId) &&
+                       hasAnyRole(['school_admin', 'principal']);
+    }
+
+    // School logos and branding
+    match /schools/{schoolId}/branding/{fileName} {
+      allow read: if belongsToSameSchool(schoolId);
+      
+      allow write: if isSchoolAdmin(schoolId) && isValidImageFile();
+      
+      allow delete: if isSchoolAdmin(schoolId);
+    }
+
+    // Bulk import templates and files
+    match /schools/{schoolId}/imports/{fileName} {
+      allow read: if belongsToSameSchool(schoolId) &&
+                     hasAnyRole(['school_admin', 'admin_assistant', 'principal']);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      hasAnyRole(['school_admin', 'admin_assistant', 'principal']) &&
+                      (request.resource.contentType.matches('text/csv') ||
+                       request.resource.contentType.matches('application/vnd.ms-excel') ||
+                       request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'));
+      
+      allow delete: if isSchoolAdmin(schoolId);
+    }
+
+    // Reports and exports
+    match /schools/{schoolId}/reports/{fileName} {
+      allow read: if belongsToSameSchool(schoolId) &&
+                     hasAnyRole(['school_admin', 'principal', 'admin_assistant']);
+      
+      allow write: if belongsToSameSchool(schoolId) &&
+                      hasAnyRole(['school_admin', 'principal', 'admin_assistant']);
+      
+      allow delete: if isSchoolAdmin(schoolId);
+    }
+
+    // Backup files - admin only
+    match /schools/{schoolId}/backups/{fileName} {
+      allow read, write: if isSchoolAdmin(schoolId);
+    }
+
+    // Default deny rule for any other paths
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

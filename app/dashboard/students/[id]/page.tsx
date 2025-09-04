@@ -10,12 +10,12 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Edit, Mail, Calendar } from "lucide-react"
-import type { Student } from "@/lib/types"
+import type { User } from "@/lib/types"
 
 export default function StudentDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const [student, setStudent] = useState<Student | null>(null)
+  const [student, setStudent] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export default function StudentDetailPage() {
       try {
         const studentDoc = await getDoc(doc(db, "users", params.id as string))
         if (studentDoc.exists()) {
-          setStudent({ id: studentDoc.id, ...studentDoc.data() } as Student)
+          setStudent({ id: studentDoc.id, ...studentDoc.data() } as User)
         }
       } catch (error) {
         console.error("Error fetching student:", error)
@@ -128,7 +128,7 @@ export default function StudentDetailPage() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Gender</label>
-                <p className="font-medium capitalize">{student.profile.gender}</p>
+                <p className="font-medium capitalize">{student.profile.gender || "Not specified"}</p>
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Date of Birth</label>
@@ -170,10 +170,18 @@ export default function StudentDetailPage() {
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Address</label>
                 <p className="font-medium">
-                  {student.profile.address.street}
-                  <br />
-                  {student.profile.address.city}, {student.profile.address.state} {student.profile.address.zipCode}
-                  <br />
+                  {student.profile.address.street && (
+                    <>
+                      {student.profile.address.street}
+                      <br />
+                    </>
+                  )}
+                  {student.profile.address.city && student.profile.address.state && (
+                    <>
+                      {student.profile.address.city}, {student.profile.address.state} {student.profile.address.zipCode}
+                      <br />
+                    </>
+                  )}
                   {student.profile.address.country}
                 </p>
               </div>

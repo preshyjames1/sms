@@ -1,12 +1,21 @@
 import { PasswordReset } from "@/components/auth/password-reset"
+import { School } from "lucide-react"
+import Link from "next/link"
 
 export default function ResetPasswordPage() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">School Management System</h1>
-          <p className="mt-2 text-gray-600">Reset your password</p>
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20 p-4">
+      <div className="w-full max-w-md space-y-6">
+        <div className="text-center space-y-2">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-2 text-primary hover:text-primary/80 transition-colors"
+          >
+            <School className="h-8 w-8" />
+            <span className="font-bold text-xl">SchoolManagementSystem.com</span>
+          </Link>
+          <h1 className="text-2xl font-bold text-foreground">Reset Password</h1>
+          <p className="text-muted-foreground">Enter your email to receive a reset link</p>
         </div>
         <PasswordReset />
       </div>

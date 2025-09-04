@@ -1,0 +1,213 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions for authentication and authorization
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+    
+    function isSchoolAdmin(schoolId) {
+      return isAuthenticated() && 
+             getUserData().role == 'school_admin' && 
+             getUserData().schoolId == schoolId;
+    }
+    
+    function belongsToSameSchool(schoolId) {
+      return isAuthenticated() && getUserData().schoolId == schoolId;
+    }
+    
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role;
+    }
+    
+    function hasAnyRole(roles) {
+      return isAuthenticated() && getUserData().role in roles;
+    }
+    
+    function isOwnerOrSchoolAdmin(userId, schoolId) {
+      return isAuthenticated() && 
+             (request.auth.uid == userId || isSchoolAdmin(schoolId));
+    }
+    
+    function canManageUsers(schoolId) {
+      return isAuthenticated() && 
+             belongsToSameSchool(schoolId) &&
+             hasAnyRole(['school_admin', 'admin_assistant', 'principal']);
+    }
+
+    // Schools collection - only school admins can manage their own school
+    match /schools/{schoolId} {
+      allow read: if belongsToSameSchool(schoolId);
+      allow write: if isSchoolAdmin(schoolId);
+    }
+
+    // Users collection - multi-tenant with role-based access
+    match /users/{userId} {
+      allow read: if isOwnerOrSchoolAdmin(userId, resource.data.schoolId) ||
+                     (belongsToSameSchool(resource.data.schoolId) && 
+                      hasAnyRole(['teacher', 'admin_assistant', 'principal']));
+      
+      allow create: if isAuthenticated() && 
+                       request.auth.uid == userId &&
+                       request.resource.data.role == 'school_admin' ||
+                       canManageUsers(request.resource.data.schoolId);
+      
+      allow update: if isOwnerOrSchoolAdmin(userId, resource.data.schoolId) &&
+                       request.resource.data.schoolId == resource.data.schoolId &&
+                       (request.auth.uid == userId || 
+                        request.resource.data.role == resource.data.role);
+      
+      allow delete: if isSchoolAdmin(resource.data.schoolId);
+    }
+
+    // Classes collection - school-specific with teacher/admin access
+    match /classes/{classId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      
+      allow create: if canManageUsers(request.resource.data.schoolId) ||
+                       (hasRole('teacher') && belongsToSameSchool(request.resource.data.schoolId));
+      
+      allow update: if canManageUsers(resource.data.schoolId) ||
+                       (hasRole('teacher') && 
+                        belongsToSameSchool(resource.data.schoolId) &&
+                        request.auth.uid in resource.data.teacherIds);
+      
+      allow delete: if canManageUsers(resource.data.schoolId);
+    }
+
+    // Subjects collection - school-specific with admin/teacher access
+    match /subjects/{subjectId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      
+      allow create: if canManageUsers(request.resource.data.schoolId) ||
+                       hasRole('teacher') && belongsToSameSchool(request.resource.data.schoolId);
+      
+      allow update: if canManageUsers(resource.data.schoolId) ||
+                       (hasRole('teacher') && belongsToSameSchool(resource.data.schoolId));
+      
+      allow delete: if canManageUsers(resource.data.schoolId);
+    }
+
+    // Attendance collection - school-specific with teacher/admin access
+    match /attendance/{attendanceId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId) &&
+                     (hasAnyRole(['school_admin', 'teacher', 'admin_assistant', 'principal']) ||
+                      (hasRole('student') && request.auth.uid == resource.data.studentId) ||
+                      (hasRole('parent') && request.auth.uid in resource.data.parentIds));
+      
+      allow create: if (hasRole('teacher') || canManageUsers(request.resource.data.schoolId)) &&
+                       belongsToSameSchool(request.resource.data.schoolId);
+      
+      allow update: if (hasRole('teacher') || canManageUsers(resource.data.schoolId)) &&
+                       belongsToSameSchool(resource.data.schoolId);
+      
+      allow delete: if canManageUsers(resource.data.schoolId);
+    }
+
+    // Messages collection - sender/recipient access with school isolation
+    match /messages/{messageId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId) &&
+                     (request.auth.uid == resource.data.senderId ||
+                      request.auth.uid in resource.data.recipientIds ||
+                      hasAnyRole(['school_admin', 'principal', 'admin_assistant']));
+      
+      allow create: if belongsToSameSchool(request.resource.data.schoolId) &&
+                       request.auth.uid == request.resource.data.senderId;
+      
+      allow update: if belongsToSameSchool(resource.data.schoolId) &&
+                       (request.auth.uid == resource.data.senderId ||
+                        hasAnyRole(['school_admin', 'principal']));
+      
+      allow delete: if belongsToSameSchool(resource.data.schoolId) &&
+                       (request.auth.uid == resource.data.senderId ||
+                        hasAnyRole(['school_admin', 'principal']));
+    }
+
+    // Announcements collection - school-specific with role-based access
+    match /announcements/{announcementId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      
+      allow create: if belongsToSameSchool(request.resource.data.schoolId) &&
+                       hasAnyRole(['school_admin', 'teacher', 'principal', 'admin_assistant']);
+      
+      allow update: if belongsToSameSchool(resource.data.schoolId) &&
+                       (request.auth.uid == resource.data.authorId ||
+                        hasAnyRole(['school_admin', 'principal']));
+      
+      allow delete: if belongsToSameSchool(resource.data.schoolId) &&
+                       (request.auth.uid == resource.data.authorId ||
+                        hasAnyRole(['school_admin', 'principal']));
+    }
+
+    // Timetables collection - school-specific with teacher/admin access
+    match /timetables/{timetableId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      
+      allow create: if canManageUsers(request.resource.data.schoolId) ||
+                       (hasRole('teacher') && belongsToSameSchool(request.resource.data.schoolId));
+      
+      allow update: if canManageUsers(resource.data.schoolId) ||
+                       (hasRole('teacher') && 
+                        belongsToSameSchool(resource.data.schoolId) &&
+                        request.auth.uid == resource.data.teacherId);
+      
+      allow delete: if canManageUsers(resource.data.schoolId);
+    }
+
+    // Grades/Reports collection - restricted access based on role
+    match /grades/{gradeId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId) &&
+                     (hasAnyRole(['school_admin', 'teacher', 'principal']) ||
+                      (hasRole('student') && request.auth.uid == resource.data.studentId) ||
+                      (hasRole('parent') && request.auth.uid in resource.data.parentIds));
+      
+      allow create: if (hasRole('teacher') || canManageUsers(request.resource.data.schoolId)) &&
+                       belongsToSameSchool(request.resource.data.schoolId);
+      
+      allow update: if (hasRole('teacher') || canManageUsers(resource.data.schoolId)) &&
+                       belongsToSameSchool(resource.data.schoolId);
+      
+      allow delete: if canManageUsers(resource.data.schoolId);
+    }
+
+    // Roles collection - only school admins can manage roles
+    match /roles/{roleId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      allow write: if isSchoolAdmin(resource.data.schoolId);
+    }
+
+    // User roles assignments - only school admins can assign roles
+    match /userRoles/{userRoleId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      allow write: if isSchoolAdmin(resource.data.schoolId);
+    }
+
+    // Billing/Subscription data - only school admins can access
+    match /subscriptions/{subscriptionId} {
+      allow read, write: if isSchoolAdmin(resource.data.schoolId);
+    }
+
+    // System logs - only school admins can read
+    match /logs/{logId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId) &&
+                     hasAnyRole(['school_admin', 'principal']);
+      allow create: if belongsToSameSchool(request.resource.data.schoolId);
+    }
+
+    // Settings collection - school-specific admin access
+    match /settings/{settingId} {
+      allow read: if belongsToSameSchool(resource.data.schoolId);
+      allow write: if isSchoolAdmin(resource.data.schoolId);
+    }
+
+    // Default deny rule for any other collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

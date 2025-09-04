@@ -1,6 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useAuth } from "@/lib/auth/context"
+import { collection, query, where, getDocs, addDoc, orderBy } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -10,42 +13,55 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Mail, Send, Search, Filter, Plus } from "lucide-react"
 import type { Message } from "@/lib/types/communication"
 
-const mockMessages: Message[] = [
-  {
-    id: "1",
-    senderId: "teacher1",
-    senderName: "Sarah Johnson",
-    senderRole: "teacher",
-    recipientId: "admin1",
-    recipientName: "John Admin",
-    recipientRole: "admin",
-    subject: "Student Progress Update",
-    content: "I wanted to update you on the progress of students in my mathematics class...",
-    timestamp: new Date("2024-01-15T10:30:00"),
-    read: false,
-    priority: "medium",
-  },
-  {
-    id: "2",
-    senderId: "parent1",
-    senderName: "Michael Brown",
-    senderRole: "parent",
-    recipientId: "admin1",
-    recipientName: "John Admin",
-    recipientRole: "admin",
-    subject: "Meeting Request",
-    content: "I would like to schedule a meeting to discuss my child's academic performance...",
-    timestamp: new Date("2024-01-14T14:20:00"),
-    read: true,
-    priority: "high",
-  },
-]
-
 export function MessageCenter() {
-  const [messages, setMessages] = useState<Message[]>(mockMessages)
+  const { user } = useAuth()
+  const [messages, setMessages] = useState<Message[]>([])
+  const [users, setUsers] = useState<any[]>([])
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null)
   const [showCompose, setShowCompose] = useState(false)
   const [searchTerm, setSearchTerm] = useState("")
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!user?.schoolId) return
+
+      try {
+        // Fetch messages where user is recipient
+        const messagesQuery = query(
+          collection(db, "messages"),
+          where("schoolId", "==", user.schoolId),
+          where("recipientId", "==", user.uid),
+          orderBy("timestamp", "desc"),
+        )
+        const messagesSnapshot = await getDocs(messagesQuery)
+        const messagesData = messagesSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as Message[]
+        setMessages(messagesData)
+
+        // Fetch all users for compose functionality
+        const usersQuery = query(
+          collection(db, "users"),
+          where("schoolId", "==", user.schoolId),
+          where("isActive", "==", true),
+        )
+        const usersSnapshot = await getDocs(usersQuery)
+        const usersData = usersSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setUsers(usersData)
+      } catch (error) {
+        console.error("Error fetching messages:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchData()
+  }, [user?.schoolId, user?.uid])
 
   const filteredMessages = messages.filter(
     (message) =>
@@ -54,6 +70,14 @@ export function MessageCenter() {
   )
 
   const unreadCount = messages.filter((m) => !m.read).length
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading messages...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-200px)]">
@@ -91,36 +115,44 @@ export function MessageCenter() {
         </CardHeader>
         <CardContent className="p-0">
           <div className="space-y-1 max-h-[500px] overflow-y-auto">
-            {filteredMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`p-4 cursor-pointer hover:bg-muted/50 border-b transition-colors ${
-                  selectedMessage?.id === message.id ? "bg-muted" : ""
-                } ${!message.read ? "bg-primary/5 border-l-4 border-l-primary" : ""}`}
-                onClick={() => setSelectedMessage(message)}
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <div className="font-medium text-sm">{message.senderName}</div>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant={
-                        message.priority === "high"
-                          ? "destructive"
-                          : message.priority === "medium"
-                            ? "default"
-                            : "secondary"
-                      }
-                      className="text-xs"
-                    >
-                      {message.priority}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{message.timestamp.toLocaleDateString()}</span>
-                  </div>
-                </div>
-                <div className="font-medium text-sm mb-1">{message.subject}</div>
-                <div className="text-xs text-muted-foreground line-clamp-2">{message.content}</div>
+            {filteredMessages.length === 0 ? (
+              <div className="p-4 text-center text-muted-foreground">
+                {searchTerm ? "No messages found matching your search." : "No messages yet."}
               </div>
-            ))}
+            ) : (
+              filteredMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`p-4 cursor-pointer hover:bg-muted/50 border-b transition-colors ${
+                    selectedMessage?.id === message.id ? "bg-muted" : ""
+                  } ${!message.read ? "bg-primary/5 border-l-4 border-l-primary" : ""}`}
+                  onClick={() => setSelectedMessage(message)}
+                >
+                  <div className="flex items-start justify-between mb-2">
+                    <div className="font-medium text-sm">{message.senderName}</div>
+                    <div className="flex items-center gap-2">
+                      <Badge
+                        variant={
+                          message.priority === "high"
+                            ? "destructive"
+                            : message.priority === "medium"
+                              ? "default"
+                              : "secondary"
+                        }
+                        className="text-xs"
+                      >
+                        {message.priority}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {new Date(message.timestamp).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="font-medium text-sm mb-1">{message.subject}</div>
+                  <div className="text-xs text-muted-foreground line-clamp-2">{message.content}</div>
+                </div>
+              ))
+            )}
           </div>
         </CardContent>
       </Card>
@@ -136,7 +168,7 @@ export function MessageCenter() {
                   <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
                     <span>From: {selectedMessage.senderName}</span>
                     <span>•</span>
-                    <span>{selectedMessage.timestamp.toLocaleString()}</span>
+                    <span>{new Date(selectedMessage.timestamp).toLocaleString()}</span>
                   </div>
                 </div>
                 <Badge
@@ -161,7 +193,7 @@ export function MessageCenter() {
               </div>
             </div>
           ) : showCompose ? (
-            <ComposeMessage onClose={() => setShowCompose(false)} />
+            <ComposeMessage users={users} onClose={() => setShowCompose(false)} />
           ) : (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               <div className="text-center">
@@ -176,7 +208,46 @@ export function MessageCenter() {
   )
 }
 
-function ComposeMessage({ onClose }: { onClose: () => void }) {
+function ComposeMessage({ users, onClose }: { users: any[]; onClose: () => void }) {
+  const { user } = useAuth()
+  const [formData, setFormData] = useState({
+    recipientId: "",
+    subject: "",
+    content: "",
+    priority: "medium",
+  })
+  const [sending, setSending] = useState(false)
+
+  const handleSend = async () => {
+    if (!user?.schoolId || !formData.recipientId || !formData.subject || !formData.content) return
+
+    setSending(true)
+    try {
+      const recipient = users.find((u) => u.id === formData.recipientId)
+      const messageData = {
+        schoolId: user.schoolId,
+        senderId: user.uid,
+        senderName: `${user.profile?.firstName} ${user.profile?.lastName}`,
+        senderRole: user.role,
+        recipientId: formData.recipientId,
+        recipientName: `${recipient?.profile?.firstName} ${recipient?.profile?.lastName}`,
+        recipientRole: recipient?.role,
+        subject: formData.subject,
+        content: formData.content,
+        priority: formData.priority,
+        timestamp: new Date(),
+        read: false,
+      }
+
+      await addDoc(collection(db, "messages"), messageData)
+      onClose()
+    } catch (error) {
+      console.error("Error sending message:", error)
+    } finally {
+      setSending(false)
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -188,24 +259,33 @@ function ComposeMessage({ onClose }: { onClose: () => void }) {
       <div className="space-y-4">
         <div>
           <label className="text-sm font-medium">To</label>
-          <Select>
+          <Select
+            value={formData.recipientId}
+            onValueChange={(value) => setFormData({ ...formData, recipientId: value })}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Select recipient" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="teacher1">Sarah Johnson (Teacher)</SelectItem>
-              <SelectItem value="parent1">Michael Brown (Parent)</SelectItem>
-              <SelectItem value="student1">Emma Wilson (Student)</SelectItem>
+              {users.map((userData) => (
+                <SelectItem key={userData.id} value={userData.id}>
+                  {userData.profile?.firstName} {userData.profile?.lastName} ({userData.role})
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
         <div>
           <label className="text-sm font-medium">Subject</label>
-          <Input placeholder="Enter subject" />
+          <Input
+            placeholder="Enter subject"
+            value={formData.subject}
+            onChange={(e) => setFormData({ ...formData, subject: e.target.value })}
+          />
         </div>
         <div>
           <label className="text-sm font-medium">Priority</label>
-          <Select defaultValue="medium">
+          <Select value={formData.priority} onValueChange={(value) => setFormData({ ...formData, priority: value })}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -218,12 +298,17 @@ function ComposeMessage({ onClose }: { onClose: () => void }) {
         </div>
         <div>
           <label className="text-sm font-medium">Message</label>
-          <Textarea placeholder="Type your message here..." rows={6} />
+          <Textarea
+            placeholder="Type your message here..."
+            rows={6}
+            value={formData.content}
+            onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+          />
         </div>
         <div className="flex gap-2">
-          <Button>
+          <Button onClick={handleSend} disabled={sending}>
             <Send className="h-4 w-4 mr-2" />
-            Send Message
+            {sending ? "Sending..." : "Send Message"}
           </Button>
           <Button variant="outline">Save Draft</Button>
         </div>

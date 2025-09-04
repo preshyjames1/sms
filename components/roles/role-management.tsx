@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useAuth } from "@/lib/auth/context"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -23,6 +23,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Plus, Edit, Trash2, Users, Shield, Info } from "lucide-react"
 import { ROLE_TEMPLATES } from "@/lib/permissions"
 import type { CustomRole, Permission, PermissionModule, PermissionAction } from "@/lib/types"
+import { collection, addDoc, updateDoc, deleteDoc, doc, query, where, getDocs } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 
 const PERMISSION_MODULES: { module: PermissionModule; label: string; description: string }[] = [
   { module: "dashboard", label: "Dashboard", description: "Main dashboard and overview" },
@@ -68,6 +70,7 @@ export function RoleManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
   const [editingRole, setEditingRole] = useState<CustomRole | null>(null)
   const [selectedTemplate, setSelectedTemplate] = useState<string>("")
+  const [loading, setLoading] = useState(true)
 
   const [formData, setFormData] = useState({
     name: "",
@@ -75,11 +78,63 @@ export function RoleManagement() {
     permissions: [] as Permission[],
   })
 
-  const handleCreateRole = () => {
-    // Implementation for creating custom role
-    console.log("Creating role:", formData)
-    setIsCreateDialogOpen(false)
-    resetForm()
+  useEffect(() => {
+    const fetchRoles = async () => {
+      if (!user?.schoolId) return
+
+      try {
+        const rolesQuery = query(collection(db, "customRoles"), where("schoolId", "==", user.schoolId))
+        const rolesSnapshot = await getDocs(rolesQuery)
+        const rolesData = rolesSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as CustomRole[]
+
+        setCustomRoles(rolesData)
+      } catch (error) {
+        console.error("Error fetching roles:", error)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchRoles()
+  }, [user?.schoolId])
+
+  const handleCreateRole = async () => {
+    if (!user?.schoolId || !formData.name) return
+
+    try {
+      if (editingRole) {
+        await updateDoc(doc(db, "customRoles", editingRole.id), {
+          name: formData.name,
+          description: formData.description,
+          permissions: formData.permissions,
+          updatedAt: new Date(),
+        })
+
+        setCustomRoles((prev) =>
+          prev.map((role) => (role.id === editingRole.id ? { ...role, ...formData, updatedAt: new Date() } : role)),
+        )
+      } else {
+        const roleData = {
+          name: formData.name,
+          description: formData.description,
+          permissions: formData.permissions,
+          schoolId: user.schoolId,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }
+
+        const docRef = await addDoc(collection(db, "customRoles"), roleData)
+        setCustomRoles((prev) => [...prev, { id: docRef.id, ...roleData }])
+      }
+
+      setIsCreateDialogOpen(false)
+      resetForm()
+    } catch (error) {
+      console.error("Error saving role:", error)
+    }
   }
 
   const handleEditRole = (role: CustomRole) => {
@@ -92,9 +147,15 @@ export function RoleManagement() {
     setIsCreateDialogOpen(true)
   }
 
-  const handleDeleteRole = (roleId: string) => {
-    // Implementation for deleting custom role
-    console.log("Deleting role:", roleId)
+  const handleDeleteRole = async (roleId: string) => {
+    if (!confirm("Are you sure you want to delete this role?")) return
+
+    try {
+      await deleteDoc(doc(db, "customRoles", roleId))
+      setCustomRoles((prev) => prev.filter((role) => role.id !== roleId))
+    } catch (error) {
+      console.error("Error deleting role:", error)
+    }
   }
 
   const resetForm = () => {
@@ -129,6 +190,14 @@ export function RoleManagement() {
   const getModuleActions = (module: PermissionModule): PermissionAction[] => {
     const permission = formData.permissions.find((p) => p.module === module)
     return permission?.actions || []
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-muted-foreground">Loading roles...</div>
+      </div>
+    )
   }
 
   return (

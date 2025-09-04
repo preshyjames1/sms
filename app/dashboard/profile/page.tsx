@@ -14,17 +14,27 @@ import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { User, MapPin, Camera, Save, Loader2 } from "lucide-react"
+import { User, MapPin, Camera, Save, Loader2, AlertCircle } from "lucide-react"
 
 export default function ProfilePage() {
   const { user, updateUserProfile } = useAuth()
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const getDateValue = (date: any) => {
+    if (!date) return ""
+    if (date instanceof Date) return date.toISOString().split("T")[0]
+    if (typeof date === "string") return date.split("T")[0]
+    if (date.toDate && typeof date.toDate === "function") return date.toDate().toISOString().split("T")[0]
+    return ""
+  }
+
   const [formData, setFormData] = useState({
     firstName: user?.profile?.firstName || "",
     lastName: user?.profile?.lastName || "",
     phone: user?.profile?.phone || "",
-    dateOfBirth: user?.profile?.dateOfBirth ? user.profile.dateOfBirth.toISOString().split("T")[0] : "",
+    dateOfBirth: getDateValue(user?.profile?.dateOfBirth),
     gender: user?.profile?.gender || "",
     address: {
       street: user?.profile?.address?.street || "",
@@ -57,6 +67,7 @@ export default function ProfilePage() {
     e.preventDefault()
     setLoading(true)
     setSuccess(false)
+    setError(null)
 
     try {
       await updateUserProfile({
@@ -72,8 +83,9 @@ export default function ProfilePage() {
       })
       setSuccess(true)
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error updating profile:", error)
+      setError(error.message || "Failed to update profile")
     } finally {
       setLoading(false)
     }
@@ -97,6 +109,17 @@ export default function ProfilePage() {
     return roleMap[role] || role
   }
 
+  if (!user) {
+    return (
+      <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <DashboardHeader breadcrumbs={[{ title: "Dashboard", href: "/dashboard" }, { title: "Profile" }]} />
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Loading profile...</div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
       <DashboardHeader breadcrumbs={[{ title: "Dashboard", href: "/dashboard" }, { title: "Profile" }]} />
@@ -107,6 +130,13 @@ export default function ProfilePage() {
           <h2 className="text-2xl font-bold tracking-tight">Profile Settings</h2>
           <p className="text-muted-foreground">Manage your personal information and account settings</p>
         </div>
+
+        {error && (
+          <Alert variant="destructive">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
 
         {success && (
           <Alert className="border-green-200 bg-green-50">
@@ -123,7 +153,7 @@ export default function ProfilePage() {
                   <Avatar className="h-24 w-24">
                     <AvatarImage src={user?.profile?.avatar || "/placeholder.svg"} alt={user?.profile?.firstName} />
                     <AvatarFallback className="text-lg">
-                      {user?.profile?.firstName?.[0]}
+                      {user?.profile?.firstName?.[0] || user?.email?.[0]?.toUpperCase()}
                       {user?.profile?.lastName?.[0]}
                     </AvatarFallback>
                   </Avatar>
@@ -137,7 +167,7 @@ export default function ProfilePage() {
                 </div>
               </div>
               <CardTitle>
-                {user?.profile?.firstName} {user?.profile?.lastName}
+                {user?.profile?.firstName || "User"} {user?.profile?.lastName || ""}
               </CardTitle>
               <CardDescription>{user?.email}</CardDescription>
             </CardHeader>
@@ -154,7 +184,13 @@ export default function ProfilePage() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Member since</span>
-                <span className="text-sm">{user?.createdAt?.toLocaleDateString()}</span>
+                <span className="text-sm">
+                  {user?.createdAt
+                    ? user.createdAt instanceof Date
+                      ? user.createdAt.toLocaleDateString()
+                      : new Date(user.createdAt).toLocaleDateString()
+                    : "N/A"}
+                </span>
               </div>
             </CardContent>
           </Card>

@@ -162,7 +162,7 @@ export default function RegisterPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background to-muted/20 p-4">
-      <div className="w-full max-w-md space-y-6">
+      <div className="w-full max-w-lg space-y-6">
         {/* Header */}
         <div className="text-center space-y-2">
           <Link
@@ -177,7 +177,7 @@ export default function RegisterPage() {
         </div>
 
         {/* Progress Indicator */}
-        <div className="flex items-center justify-center space-x-4">
+        <div className="flex items-center justify-center space-x-2 sm:space-x-4">
           <div className="flex items-center">
             <div
               className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -186,9 +186,10 @@ export default function RegisterPage() {
             >
               {step > 1 ? <CheckCircle className="h-4 w-4" /> : "1"}
             </div>
-            <span className="ml-2 text-sm text-muted-foreground">Personal Info</span>
+            <span className="ml-2 text-xs sm:text-sm text-muted-foreground hidden sm:inline">Personal Info</span>
+            <span className="ml-2 text-xs text-muted-foreground sm:hidden">Info</span>
           </div>
-          <div className={`w-8 h-0.5 ${step >= 2 ? "bg-primary" : "bg-muted"}`} />
+          <div className={`w-6 sm:w-8 h-0.5 ${step >= 2 ? "bg-primary" : "bg-muted"}`} />
           <div className="flex items-center">
             <div
               className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium ${
@@ -197,7 +198,8 @@ export default function RegisterPage() {
             >
               2
             </div>
-            <span className="ml-2 text-sm text-muted-foreground">School Setup</span>
+            <span className="ml-2 text-xs sm:text-sm text-muted-foreground hidden sm:inline">School Setup</span>
+            <span className="ml-2 text-xs text-muted-foreground sm:hidden">Setup</span>
           </div>
         </div>
 
@@ -231,7 +233,7 @@ export default function RegisterPage() {
 
               {step === 1 ? (
                 <>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label htmlFor="firstName">First Name *</Label>
                       <Input
@@ -311,6 +313,7 @@ export default function RegisterPage() {
                         value={formData.password}
                         onChange={handleInputChange}
                         required
+                        className="pr-10"
                       />
                       <Button
                         type="button"
@@ -340,6 +343,7 @@ export default function RegisterPage() {
                         value={formData.confirmPassword}
                         onChange={handleInputChange}
                         required
+                        className="pr-10"
                       />
                       <Button
                         type="button"
@@ -363,18 +367,18 @@ export default function RegisterPage() {
                     </Alert>
                   )}
 
-                  <div className="flex gap-2">
-                    <Button type="button" variant="outline" onClick={() => setStep(1)} className="w-full">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button type="button" variant="outline" onClick={() => setStep(1)} className="w-full sm:w-1/2">
                       Back
                     </Button>
-                    <Button type="submit" className="w-full" disabled={loading || !validateStep2()}>
+                    <Button type="submit" className="w-full sm:w-1/2" disabled={loading || !validateStep2()}>
                       {loading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Creating Account...
+                          Creating...
                         </>
                       ) : (
-                        "Create School Account"
+                        "Create Account"
                       )}
                     </Button>
                   </div>

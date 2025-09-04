@@ -1,6 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useAuth } from "@/lib/auth/context"
+import { collection, query, where, getDocs } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -15,9 +18,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Search, MoreHorizontal, Edit, Eye, Trash2, UserPlus } from "lucide-react"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Search, MoreHorizontal, Edit, Eye, Trash2 } from "lucide-react"
 import type { User } from "@/lib/types"
-import Link from "next/link"
 
 interface UserTableProps {
   users: User[]
@@ -28,8 +31,35 @@ interface UserTableProps {
 }
 
 export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTableProps) {
+  const { user } = useAuth()
   const [searchTerm, setSearchTerm] = useState("")
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all")
+  const [classFilter, setClassFilter] = useState<string>("all")
+  const [classes, setClasses] = useState<any[]>([])
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      if (userType !== "students" || !user?.schoolId) return
+
+      try {
+        const classesQuery = query(
+          collection(db, "classes"),
+          where("schoolId", "==", user.schoolId),
+          where("isActive", "==", true),
+        )
+        const classesSnapshot = await getDocs(classesQuery)
+        const classesData = classesSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setClasses(classesData)
+      } catch (error) {
+        console.error("Error fetching classes:", error)
+      }
+    }
+
+    fetchClasses()
+  }, [userType, user?.schoolId])
 
   const filteredUsers = users.filter((user) => {
     const matchesSearch =
@@ -42,18 +72,10 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
       (statusFilter === "active" && user.isActive) ||
       (statusFilter === "inactive" && !user.isActive)
 
-    return matchesSearch && matchesStatus
-  })
+    const matchesClass = userType !== "students" || classFilter === "all" || user.profile?.classId === classFilter
 
-  const getUserTypeLabel = (type: string) => {
-    const labels = {
-      students: "Students",
-      teachers: "Teachers",
-      parents: "Parents",
-      staff: "Staff",
-    }
-    return labels[type as keyof typeof labels] || "Users"
-  }
+    return matchesSearch && matchesStatus && matchesClass
+  })
 
   const getRoleBadgeVariant = (role: string) => {
     switch (role) {
@@ -70,22 +92,13 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
     }
   }
 
+  const getClassName = (classId: string) => {
+    const classData = classes.find((c) => c.id === classId)
+    return classData ? `${classData.name} - ${classData.section}` : "No Class"
+  }
+
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold tracking-tight">{getUserTypeLabel(userType)}</h2>
-          <p className="text-muted-foreground">Manage your school's {userType.toLowerCase()}</p>
-        </div>
-        <Link href={`/dashboard/${userType}/new`}>
-          <Button>
-            <UserPlus className="mr-2 h-4 w-4" />
-            Add {userType.slice(0, -1)}
-          </Button>
-        </Link>
-      </div>
-
       {/* Filters */}
       <Card>
         <CardHeader className="pb-3">
@@ -126,6 +139,25 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
               </Button>
             </div>
           </div>
+
+          {userType === "students" && classes.length > 0 && (
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium">Filter by Class:</label>
+              <Select value={classFilter} onValueChange={setClassFilter}>
+                <SelectTrigger className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Classes</SelectItem>
+                  {classes.map((classData) => (
+                    <SelectItem key={classData.id} value={classData.id}>
+                      {classData.name} - {classData.section}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -138,6 +170,7 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
                 <TableHead>User</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
+                {userType === "students" && <TableHead>Class</TableHead>}
                 <TableHead>Status</TableHead>
                 <TableHead>Joined</TableHead>
                 <TableHead className="w-[70px]">Actions</TableHead>
@@ -146,9 +179,9 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
             <TableBody>
               {filteredUsers.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-8">
+                  <TableCell colSpan={userType === "students" ? 7 : 6} className="text-center py-8">
                     <div className="text-muted-foreground">
-                      {searchTerm || statusFilter !== "all"
+                      {searchTerm || statusFilter !== "all" || classFilter !== "all"
                         ? `No ${userType} found matching your criteria.`
                         : `No ${userType} found. Add your first ${userType.slice(0, -1)} to get started.`}
                     </div>
@@ -182,6 +215,13 @@ export function UserTable({ users, userType, onEdit, onDelete, onView }: UserTab
                         {user.role.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
                       </Badge>
                     </TableCell>
+                    {userType === "students" && (
+                      <TableCell>
+                        <Badge variant="outline">
+                          {user.profile?.classId ? getClassName(user.profile.classId) : "No Class"}
+                        </Badge>
+                      </TableCell>
+                    )}
                     <TableCell>
                       <Badge variant={user.isActive ? "default" : "secondary"}>
                         {user.isActive ? "Active" : "Inactive"}

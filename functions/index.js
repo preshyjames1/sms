@@ -4,21 +4,7 @@ const nodemailer = require("nodemailer");
 
 admin.initializeApp();
 
-// Configure email transporter for MailerSend
-// In production, use environment variables for credentials
-const transporter = nodemailer.createTransport({
-  host: "smtp.mailersend.net",
-  port: 587,
-  secure: false, // Use TLS
-  auth: {
-    // Set via: firebase functions:config:set mailersend.smtp_user="your-smtp-username"
-    user: functions.config().mailersend.smtp_user,
-    // Set via: firebase functions:config:set mailersend.smtp_pass="your-smtp-password"
-    pass: functions.config().mailersend.smtp_pass,
-  },
-});
-
-// Email templates
+// Email templates (no changes needed)
 const emailTemplates = {
   welcomeSchoolAdmin: (userData, schoolData, tempPassword) => ({
     subject: `Welcome to ${schoolData.name} - School Management System`,
@@ -284,8 +270,20 @@ const emailTemplates = {
  */
 async function sendEmail(to, template) {
   try {
+    // Transporter is now defined here, inside the function, to make sure environment variables are available
+    // NOTE: This will not impact performance negatively as Cloud Functions re-use the same execution environment
+    const transporter = nodemailer.createTransport({
+      host: "smtp.mailersend.net",
+      port: 587,
+      secure: false, // Use TLS
+      auth: {
+        user: process.env.MAILERSEND_SMTP_USER,
+        pass: process.env.MAILERSEND_SMTP_PASS,
+      },
+    });
+
     const mailOptions = {
-      from: `"School Management System" <${functions.config().mailersend.smtp_user}>`,
+      from: `"School Management System" <${process.env.MAILERSEND_SMTP_USER}>`,
       to: to,
       subject: template.subject,
       html: template.html,
@@ -300,167 +298,155 @@ async function sendEmail(to, template) {
   }
 }
 
-/**
- * Sends a welcome email to a new user based on their role.
- * @param {Object} snap - The Firestore snapshot of the newly created user document.
- * @param {Object} context - The context of the Cloud Function, including parameters like userId.
- * @returns {Promise<Object|null>} The result of the email sending operation or null if an error occurs.
- */
-exports.sendWelcomeEmail = functions.firestore.document("users/{userId}").onCreate(async (snap, context) => {
-  const userData = snap.data();
-  const userId = context.params.userId;
+// NOTE: All functions that require access to the secrets must be explicitly granted access via runWith
+exports.sendWelcomeEmail = functions
+    .runWith({secrets: ["MAILERSEND_SMTP_USER", "MAILERSEND_SMTP_PASS"]})
+    .firestore.document("users/{userId}").onCreate(async (snap, context) => {
+      const userData = snap.data();
+      const userId = context.params.userId;
 
-  try {
-    // Get school data
-    const schoolDoc = await admin.firestore().doc(`schools/${userData.schoolId}`).get();
-    if (!schoolDoc.exists) {
-      console.error("School not found for user:", userId);
-      return null;
-    }
-    const schoolData = schoolDoc.data();
-
-    let template;
-    const parentEmails = [];
-    const childrenNames = [];
-
-    // Generate temporary password if needed
-    const tempPassword = userData.tempPassword || null;
-
-    switch (userData.role) {
-      case "school_admin":
-        template = emailTemplates.welcomeSchoolAdmin(userData, schoolData, tempPassword);
-        break;
-
-      case "teacher":
-        template = emailTemplates.welcomeTeacher(userData, schoolData, tempPassword);
-        break;
-
-      case "student":
-        // Get parent emails
-        if (userData.parentIds && userData.parentIds.length > 0) {
-          const parentDocs = await Promise.all(
-              userData.parentIds.map((id) => admin.firestore().doc(`users/${id}`).get()),
-          );
-          parentDocs.forEach((doc) => {
-            if (doc.exists) {
-              parentEmails.push(doc.data().email);
-            }
-          });
+      try {
+        // Get school data
+        const schoolDoc = await admin.firestore().doc(`schools/${userData.schoolId}`).get();
+        if (!schoolDoc.exists) {
+          console.error("School not found for user:", userId);
+          return null;
         }
-        template = emailTemplates.welcomeStudent(userData, schoolData, parentEmails, tempPassword);
-        break;
+        const schoolData = schoolDoc.data();
 
-      case "parent":
-        // Get children names
-        if (userData.childrenIds && userData.childrenIds.length > 0) {
-          const childrenDocs = await Promise.all(
-              userData.childrenIds.map((id) => admin.firestore().doc(`users/${id}`).get()),
-          );
-          childrenDocs.forEach((doc) => {
-            if (doc.exists) {
-              const child = doc.data();
-              childrenNames.push(`${child.profile.firstName} ${child.profile.lastName}`);
+        let template;
+        const parentEmails = [];
+        const childrenNames = [];
+
+        // Generate temporary password if needed
+        const tempPassword = userData.tempPassword || null;
+
+        switch (userData.role) {
+          case "school_admin":
+            template = emailTemplates.welcomeSchoolAdmin(userData, schoolData, tempPassword);
+            break;
+
+          case "teacher":
+            template = emailTemplates.welcomeTeacher(userData, schoolData, tempPassword);
+            break;
+
+          case "student":
+            // Get parent emails
+            if (userData.parentIds && userData.parentIds.length > 0) {
+              const parentDocs = await Promise.all(
+                  userData.parentIds.map((id) => admin.firestore().doc(`users/${id}`).get()),
+              );
+              parentDocs.forEach((doc) => {
+                if (doc.exists) {
+                  parentEmails.push(doc.data().email);
+                }
+              });
             }
-          });
+            template = emailTemplates.welcomeStudent(userData, schoolData, parentEmails, tempPassword);
+            break;
+
+          case "parent":
+            // Get children names
+            if (userData.childrenIds && userData.childrenIds.length > 0) {
+              const childrenDocs = await Promise.all(
+                  userData.childrenIds.map((id) => admin.firestore().doc(`users/${id}`).get()),
+              );
+              childrenDocs.forEach((doc) => {
+                if (doc.exists) {
+                  const child = doc.data();
+                  childrenNames.push(`${child.profile.firstName} ${child.profile.lastName}`);
+                }
+              });
+            }
+            template = emailTemplates.welcomeParent(userData, schoolData, childrenNames, tempPassword);
+            break;
+
+          default:
+            // For other roles (staff, etc.), use a generic welcome template
+            template = emailTemplates.welcomeTeacher(userData, schoolData, tempPassword);
+            break;
         }
-        template = emailTemplates.welcomeParent(userData, schoolData, childrenNames, tempPassword);
-        break;
 
-      default:
-        // For other roles (staff, etc.), use a generic welcome template
-        template = emailTemplates.welcomeTeacher(userData, schoolData, tempPassword);
-        break;
-    }
+        // Send the email
+        const result = await sendEmail(userData.email, template);
 
-    // Send the email
-    const result = await sendEmail(userData.email, template);
+        // Log the result
+        await admin
+            .firestore()
+            .collection("emailLogs")
+            .add({
+              userId: userId,
+              email: userData.email,
+              type: "welcome",
+              role: userData.role,
+              success: result.success,
+              messageId: result.messageId || null,
+              error: result.error || null,
+              sentAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
 
-    // Log the result
-    await admin
-        .firestore()
-        .collection("emailLogs")
-        .add({
-          userId: userId,
-          email: userData.email,
-          type: "welcome",
-          role: userData.role,
-          success: result.success,
-          messageId: result.messageId || null,
-          error: result.error || null,
-          sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        return result;
+      } catch (error) {
+        console.error("Error in sendWelcomeEmail function:", error);
+        return null;
+      }
+    });
 
-    return result;
-  } catch (error) {
-    console.error("Error in sendWelcomeEmail function:", error);
-    return null;
-  }
-});
+exports.sendPasswordResetEmail = functions
+    .runWith({secrets: ["MAILERSEND_SMTP_USER", "MAILERSEND_SMTP_PASS"]})
+    .https.onCall(async (data, context) => {
+      // Verify the user is authenticated
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
+      }
 
-/**
- * Sends a password reset email to a user.
- * @param {Object} data - Contains the email address and reset link.
- * @param {Object} context - The context of the Cloud Function, including authentication details.
- * @returns {Promise<Object>} An object indicating success or failure of the email sending operation.
- * @throws {functions.https.HttpsError} If the user is not authenticated or an error occurs.
- */
-exports.sendPasswordResetEmail = functions.https.onCall(async (data, context) => {
-  // Verify the user is authenticated
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
-  }
+      const {email, resetLink} = data;
 
-  const {email, resetLink} = data;
+      try {
+        // Get user data
+        const userQuery = await admin.firestore().collection("users").where("email", "==", email).limit(1).get();
 
-  try {
-    // Get user data
-    const userQuery = await admin.firestore().collection("users").where("email", "==", email).limit(1).get();
+        if (userQuery.empty) {
+          throw new functions.https.HttpsError("not-found", "User not found");
+        }
 
-    if (userQuery.empty) {
-      throw new functions.https.HttpsError("not-found", "User not found");
-    }
+        const userData = userQuery.docs[0].data();
+        const template = emailTemplates.passwordReset(userData, resetLink);
 
-    const userData = userQuery.docs[0].data();
-    const template = emailTemplates.passwordReset(userData, resetLink);
+        // Send the email
+        const result = await sendEmail(email, template);
 
-    // Send the email
-    const result = await sendEmail(email, template);
+        // Log the result
+        await admin
+            .firestore()
+            .collection("emailLogs")
+            .add({
+              userId: userQuery.docs[0].id,
+              email: email,
+              type: "password_reset",
+              success: result.success,
+              messageId: result.messageId || null,
+              error: result.error || null,
+              sentAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
 
-    // Log the result
-    await admin
-        .firestore()
-        .collection("emailLogs")
-        .add({
-          userId: userQuery.docs[0].id,
-          email: email,
-          type: "password_reset",
-          success: result.success,
-          messageId: result.messageId || null,
-          error: result.error || null,
-          sentAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        return {success: result.success};
+      } catch (error) {
+        console.error("Error in sendPasswordResetEmail function:", error);
+        throw new functions.https.HttpsError("internal", "Failed to send password reset email");
+      }
+    });
 
-    return {success: result.success};
-  } catch (error) {
-    console.error("Error in sendPasswordResetEmail function:", error);
-    throw new functions.https.HttpsError("internal", "Failed to send password reset email");
-  }
-});
-
-/**
- * Sends announcement emails to users based on the target audience.
- * @param {Object} snap - The Firestore snapshot of the newly created announcement document.
- * @param {Object} context - The context of the Cloud Function, including parameters like announcementId.
- * @returns {Promise<Object|null>} An object with email sending stats or null if an error occurs.
- */
-exports.sendAnnouncementEmail = functions.firestore
+exports.sendAnnouncementEmail = functions
+    .runWith({secrets: ["MAILERSEND_SMTP_USER", "MAILERSEND_SMTP_PASS"]})
+    .firestore
     .document("announcements/{announcementId}")
     .onCreate(async (snap, context) => {
       const announcementData = snap.data();
       const announcementId = context.params.announcementId;
 
       try {
-      // Get school data
+        // Get school data
         const schoolDoc = await admin.firestore().doc(`schools/${announcementData.schoolId}`).get();
         if (!schoolDoc.exists) {
           console.error("School not found for announcement:", announcementId);
@@ -535,45 +521,40 @@ exports.sendAnnouncementEmail = functions.firestore
       }
     });
 
-/**
- * Sends bulk notification emails to specified recipients.
- * @param {Object} data - Contains recipients, subject, content, and schoolId.
- * @param {Object} context - The context of the Cloud Function, including authentication details.
- * @returns {Promise<Object>} An object with email sending stats.
- * @throws {functions.https.HttpsError} If the user is not authenticated or lacks permissions.
- */
-exports.sendBulkNotificationEmail = functions.https.onCall(async (data, context) => {
-  // Verify the user is authenticated and has permission
-  if (!context.auth) {
-    throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
-  }
+exports.sendBulkNotificationEmail = functions
+    .runWith({secrets: ["MAILERSEND_SMTP_USER", "MAILERSEND_SMTP_PASS"]})
+    .https.onCall(async (data, context) => {
+      // Verify the user is authenticated and has permission
+      if (!context.auth) {
+        throw new functions.https.HttpsError("unauthenticated", "User must be authenticated");
+      }
 
-  const {recipients, subject, content, schoolId} = data;
+      const {recipients, subject, content, schoolId} = data;
 
-  try {
-    // Verify user has permission to send bulk emails
-    const userDoc = await admin.firestore().doc(`users/${context.auth.uid}`).get();
-    if (!userDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "User not found");
-    }
+      try {
+        // Verify user has permission to send bulk emails
+        const userDoc = await admin.firestore().doc(`users/${context.auth.uid}`).get();
+        if (!userDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "User not found");
+        }
 
-    const userData = userDoc.data();
-    if (!["school_admin", "sub_admin"].includes(userData.role)) {
-      throw new functions.https.HttpsError("permission-denied", "Insufficient permissions");
-    }
+        const userData = userDoc.data();
+        if (!["school_admin", "sub_admin"].includes(userData.role)) {
+          throw new functions.https.HttpsError("permission-denied", "Insufficient permissions");
+        }
 
-    // Get school data
-    const schoolDoc = await admin.firestore().doc(`schools/${schoolId}`).get();
-    if (!schoolDoc.exists) {
-      throw new functions.https.HttpsError("not-found", "School not found");
-    }
-    const schoolData = schoolDoc.data();
+        // Get school data
+        const schoolDoc = await admin.firestore().doc(`schools/${schoolId}`).get();
+        if (!schoolDoc.exists) {
+          throw new functions.https.HttpsError("not-found", "School not found");
+        }
+        const schoolData = schoolDoc.data();
 
-    // Send emails to all recipients
-    const emailPromises = recipients.map(async (recipient) => {
-      const customTemplate = {
-        subject: subject,
-        html: `
+        // Send emails to all recipients
+        const emailPromises = recipients.map(async (recipient) => {
+          const customTemplate = {
+            subject: subject,
+            html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
             <div style="text-align: center; margin-bottom: 30px;">
               <h1 style="color: #16a34a; margin-bottom: 10px;">${schoolData.name}</h1>
@@ -593,45 +574,40 @@ exports.sendBulkNotificationEmail = functions.https.onCall(async (data, context)
             </div>
           </div>
         `,
-      };
+          };
 
-      const result = await sendEmail(recipient.email, customTemplate);
+          const result = await sendEmail(recipient.email, customTemplate);
 
-      // Log each email
-      await admin
-          .firestore()
-          .collection("emailLogs")
-          .add({
-            userId: recipient.userId || null,
-            email: recipient.email,
-            type: "bulk_notification",
-            subject: subject,
-            success: result.success,
-            messageId: result.messageId || null,
-            error: result.error || null,
-            sentBy: context.auth.uid,
-            sentAt: admin.firestore.FieldValue.serverTimestamp(),
-          });
+          // Log each email
+          await admin
+              .firestore()
+              .collection("emailLogs")
+              .add({
+                userId: recipient.userId || null,
+                email: recipient.email,
+                type: "bulk_notification",
+                subject: subject,
+                success: result.success,
+                messageId: result.messageId || null,
+                error: result.error || null,
+                sentBy: context.auth.uid,
+                sentAt: admin.firestore.FieldValue.serverTimestamp(),
+              });
 
-      return result;
+          return result;
+        });
+
+        const results = await Promise.all(emailPromises);
+        const successCount = results.filter((r) => r.success).length;
+        const failureCount = results.length - successCount;
+
+        return {totalSent: results.length, successful: successCount, failed: failureCount};
+      } catch (error) {
+        console.error("Error in sendBulkNotificationEmail function:", error);
+        throw new functions.https.HttpsError("internal", "Failed to send bulk notification emails");
+      }
     });
 
-    const results = await Promise.all(emailPromises);
-    const successCount = results.filter((r) => r.success).length;
-    const failureCount = results.length - successCount;
-
-    return {totalSent: results.length, successful: successCount, failed: failureCount};
-  } catch (error) {
-    console.error("Error in sendBulkNotificationEmail function:", error);
-    throw new functions.https.HttpsError("internal", "Failed to send bulk notification emails");
-  }
-});
-
-/**
- * Cleans up email logs older than 30 days.
- * @param {Object} context - The context of the Cloud Function.
- * @returns {Promise<null>} Returns null after completion or if an error occurs.
- */
 exports.cleanupEmailLogs = functions.pubsub.schedule("0 2 * * *").onRun(async (context) => {
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);

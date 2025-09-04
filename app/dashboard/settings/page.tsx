@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Settings, School, Globe, Save, Loader2 } from "lucide-react"
+import { Settings, School, Globe, Save, Loader2, AlertCircle } from "lucide-react"
 
 interface SchoolSettings {
   name: string
@@ -55,10 +55,15 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [success, setSuccess] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchSettings = async () => {
-      if (!user?.schoolId) return
+      if (!user?.schoolId) {
+        setError("No school ID found. Please contact support.")
+        setLoading(false)
+        return
+      }
 
       try {
         const schoolDoc = await getDoc(doc(db, "schools", user.schoolId))
@@ -96,22 +101,58 @@ export default function SettingsPage() {
               pushNotifications: true,
             },
           })
+        } else {
+          const defaultSettings: SchoolSettings = {
+            name: `${user.profile?.firstName || "My"} School`,
+            address: {
+              street: "",
+              city: "",
+              state: "",
+              country: "",
+              zipCode: "",
+            },
+            phone: "",
+            email: user.email || "",
+            website: "",
+            logo: "",
+            academicYear: new Date().getFullYear().toString(),
+            currency: "USD",
+            timezone: "UTC",
+            language: "en",
+            features: {
+              attendance: true,
+              examinations: true,
+              library: false,
+              transport: false,
+              hostel: false,
+              accounting: false,
+              messaging: true,
+            },
+            notifications: {
+              emailNotifications: true,
+              smsNotifications: false,
+              pushNotifications: true,
+            },
+          }
+          setSettings(defaultSettings)
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error fetching settings:", error)
+        setError(error.message || "Failed to load settings")
       } finally {
         setLoading(false)
       }
     }
 
     fetchSettings()
-  }, [user?.schoolId])
+  }, [user?.schoolId, user?.profile?.firstName, user?.email])
 
   const handleSave = async () => {
     if (!user?.schoolId || !settings) return
 
     setSaving(true)
     setSuccess(false)
+    setError(null)
 
     try {
       await updateDoc(doc(db, "schools", user.schoolId), {
@@ -134,8 +175,9 @@ export default function SettingsPage() {
 
       setSuccess(true)
       setTimeout(() => setSuccess(false), 3000)
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error saving settings:", error)
+      setError(error.message || "Failed to save settings")
     } finally {
       setSaving(false)
     }
@@ -203,6 +245,13 @@ export default function SettingsPage() {
               </Button>
             </PermissionGuard>
           </div>
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
 
           {success && (
             <Alert className="border-green-200 bg-green-50">

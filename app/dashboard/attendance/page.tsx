@@ -1,6 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { useAuth } from "@/lib/auth/context"
+import { collection, query, where, getDocs, addDoc, updateDoc, doc } from "firebase/firestore"
+import { db } from "@/lib/firebase"
 import { DashboardHeader } from "@/components/dashboard/dashboard-header"
 import { AttendanceTracker } from "@/components/academic/attendance-tracker"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -12,33 +15,138 @@ import { CalendarIcon } from "lucide-react"
 import { format } from "date-fns"
 import type { AttendanceRecord } from "@/lib/types/academic"
 
-// Mock data
-const mockStudents = [
-  { id: "1", name: "John Doe", rollNumber: "001" },
-  { id: "2", name: "Jane Smith", rollNumber: "002" },
-  { id: "3", name: "Mike Johnson", rollNumber: "003" },
-  { id: "4", name: "Sarah Wilson", rollNumber: "004" },
-]
-
-const mockClasses = [
-  { id: "1", name: "Mathematics - A", grade: "10" },
-  { id: "2", name: "Science - B", grade: "9" },
-]
-
 export default function AttendancePage() {
+  const { user } = useAuth()
   const [selectedClass, setSelectedClass] = useState("")
   const [selectedDate, setSelectedDate] = useState<Date>(new Date())
-  const [students, setStudents] = useState(mockStudents)
+  const [students, setStudents] = useState<any[]>([])
+  const [classes, setClasses] = useState<any[]>([])
+  const [existingRecords, setExistingRecords] = useState<AttendanceRecord[]>([])
   const [loading, setLoading] = useState(false)
+  const [dataLoading, setDataLoading] = useState(true)
+
+  useEffect(() => {
+    const fetchClasses = async () => {
+      if (!user?.schoolId) return
+
+      try {
+        const classesQuery = query(
+          collection(db, "classes"),
+          where("schoolId", "==", user.schoolId),
+          where("isActive", "==", true),
+        )
+        const classesSnapshot = await getDocs(classesQuery)
+        const classesData = classesSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+        setClasses(classesData)
+      } catch (error) {
+        console.error("Error fetching classes:", error)
+      } finally {
+        setDataLoading(false)
+      }
+    }
+
+    fetchClasses()
+  }, [user?.schoolId])
+
+  useEffect(() => {
+    const fetchStudentsAndAttendance = async () => {
+      if (!selectedClass || !user?.schoolId) return
+
+      setDataLoading(true)
+      try {
+        // Fetch students for selected class
+        const studentsQuery = query(
+          collection(db, "users"),
+          where("schoolId", "==", user.schoolId),
+          where("role", "==", "student"),
+          where("profile.classId", "==", selectedClass),
+          where("isActive", "==", true),
+        )
+        const studentsSnapshot = await getDocs(studentsQuery)
+        const studentsData = studentsSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          name: `${doc.data().profile?.firstName} ${doc.data().profile?.lastName}`,
+          rollNumber: doc.data().profile?.rollNumber || doc.id.slice(-3),
+          avatar: doc.data().profile?.avatar,
+          ...doc.data(),
+        }))
+        setStudents(studentsData)
+
+        // Fetch existing attendance records for the selected date
+        const attendanceQuery = query(
+          collection(db, "attendance"),
+          where("schoolId", "==", user.schoolId),
+          where("classId", "==", selectedClass),
+          where("date", "==", format(selectedDate, "yyyy-MM-dd")),
+        )
+        const attendanceSnapshot = await getDocs(attendanceQuery)
+        const attendanceData = attendanceSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        })) as AttendanceRecord[]
+        setExistingRecords(attendanceData)
+      } catch (error) {
+        console.error("Error fetching students and attendance:", error)
+      } finally {
+        setDataLoading(false)
+      }
+    }
+
+    fetchStudentsAndAttendance()
+  }, [selectedClass, selectedDate, user?.schoolId])
 
   const handleSaveAttendance = async (records: Partial<AttendanceRecord>[]) => {
+    if (!user?.schoolId || !selectedClass) return
+
     setLoading(true)
     try {
-      // Implement Firebase attendance saving
-      console.log("Saving attendance:", records)
+      const dateString = format(selectedDate, "yyyy-MM-dd")
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1500))
+      for (const record of records) {
+        const attendanceData = {
+          schoolId: user.schoolId,
+          classId: selectedClass,
+          studentId: record.studentId,
+          date: dateString,
+          status: record.status,
+          notes: record.notes || "",
+          markedBy: user.uid,
+          markedAt: new Date(),
+        }
+
+        // Check if record already exists
+        const existingRecord = existingRecords.find((r) => r.studentId === record.studentId)
+
+        if (existingRecord) {
+          // Update existing record
+          await updateDoc(doc(db, "attendance", existingRecord.id), {
+            status: record.status,
+            notes: record.notes || "",
+            markedBy: user.uid,
+            markedAt: new Date(),
+          })
+        } else {
+          // Create new record
+          await addDoc(collection(db, "attendance"), attendanceData)
+        }
+      }
+
+      // Refresh existing records
+      const attendanceQuery = query(
+        collection(db, "attendance"),
+        where("schoolId", "==", user.schoolId),
+        where("classId", "==", selectedClass),
+        where("date", "==", dateString),
+      )
+      const attendanceSnapshot = await getDocs(attendanceQuery)
+      const attendanceData = attendanceSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as AttendanceRecord[]
+      setExistingRecords(attendanceData)
 
       alert("Attendance saved successfully!")
     } catch (error) {
@@ -47,6 +155,17 @@ export default function AttendancePage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  if (dataLoading) {
+    return (
+      <div className="flex flex-1 flex-col gap-4 p-4 pt-0">
+        <DashboardHeader breadcrumbs={[{ title: "Dashboard", href: "/dashboard" }, { title: "Attendance" }]} />
+        <div className="flex items-center justify-center h-64">
+          <div className="text-muted-foreground">Loading attendance data...</div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -69,9 +188,9 @@ export default function AttendancePage() {
                     <SelectValue placeholder="Choose a class" />
                   </SelectTrigger>
                   <SelectContent>
-                    {mockClasses.map((classData) => (
+                    {classes.map((classData) => (
                       <SelectItem key={classData.id} value={classData.id}>
-                        {classData.name} (Grade {classData.grade})
+                        {classData.name} - {classData.section} (Grade {classData.grade})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -102,16 +221,21 @@ export default function AttendancePage() {
         </Card>
 
         {/* Attendance Tracker */}
-        {selectedClass && (
+        {selectedClass && students.length > 0 ? (
           <AttendanceTracker
             students={students}
             date={selectedDate}
             onSave={handleSaveAttendance}
+            existingRecords={existingRecords}
             isLoading={loading}
           />
-        )}
-
-        {!selectedClass && (
+        ) : selectedClass && students.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-8">
+              <div className="text-muted-foreground">No students found in this class.</div>
+            </CardContent>
+          </Card>
+        ) : (
           <Card>
             <CardContent className="text-center py-8">
               <div className="text-muted-foreground">Please select a class to start marking attendance.</div>

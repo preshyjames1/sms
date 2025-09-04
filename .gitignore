@@ -18,10 +18,15 @@ yarn-error.log*
 
 # env files
 .env*
-
+.env.local
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+SECURITY_RULES_DOCUMENTATION.md
+firestore.rules
+storage.rules
+school2.code-workspace

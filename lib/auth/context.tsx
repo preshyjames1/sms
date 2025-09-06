@@ -100,9 +100,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       })
-
+//&& userData.schoolId === firebaseUser.uid
       // If this is a school admin, create the school document
-      if (userData.role === "school_admin" && userData.schoolId === firebaseUser.uid) {
+      if (userData.role === "school_admin") {
         const schoolData = {
           id: firebaseUser.uid,
           name: userData.schoolName || `${userData.profile?.firstName}'s School`,

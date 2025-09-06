@@ -83,7 +83,7 @@ export default function RegisterPage() {
           lastName: formData.lastName,
           phone: formData.phone,
         },
-        schoolId: "", // Will be set to user ID in the signUp function
+        //schoolId: "", // Will be set to user ID in the signUp function
         schoolName: formData.schoolName, // Added school name to signup data
       })
 
